@@ -1,0 +1,61 @@
+* rustで作る
+* mlua+egui+image+midirを使ってGUIプログラミング環境を作る
+  - VirtualWindowは使わない
+  - luaからは coroutine.yield() でeguiのイベント処理に回す
+    - eguiはメインスレッドで、luaは専用スレッドで回す
+  - sleep(float_seconds) で float_seconds だけスリープする関数を設ける
+  - eguiモジュールを luamod.rs モジュールとして実装し、luaからは eguiモジュールとして利用可能にする
+    - w = egui.create_window("Title", width, height) でegui新規ウィンドウ（非VirtualWindow）ウィンドウタイトルを指定してwidth,height幅のウィンドウを作成
+    - グラフィックは次のように扱う
+      - **Painterオブジェクトは使わない**
+      - フレームバッファとして width,height幅の RGBA配列を持つ
+      - 1つのlua coroutine.yield()ごとにフレームバッファを **直接** ウィンドウへ転送して描画する(**最速の描画となるように留意する**)
+      - 描画の際はリサイズを考慮しない
+    - w:cls(r,g,b,a) でグラフィック初期化(r,g,bは任意、デフォルトで0,0,0,255)
+    - w:scroll(dx,dy,r,g,b,a) でグラフィックをdx,dyだけスクロール、余白はr,g,bで埋める(r,g,b,aは任意、デフォルトで0,0,0,255)
+    - w:point(x,y,r,g,b,a) でグラフィックに1ドットの点を打つ(aはα値でデフォルトで255)
+    - w:getpoint(x,y) でグラフィック上の x,yの r,g,b,aのタプルを得る
+    - w:line(x1,y1,x2,y2,r,g,b,a) でグラフィックに線を描く(aはα値でデフォルトで255)
+    - w:circle(x,y,radius,r,g,b,a) でグラフィックに円を描く(aはα値でデフォルトで255)
+    - w:settextcolor(r,g,b,a) でw:text用の色を保存(r,g,b,aは任意、デフォルトで255,255,255,255)
+    - w:gettextcolor() でw:settextcolorで指定した色を r,g,b,aのタプルで得る
+    - w:text(x,y,...) でグラフィックの x,yに ... を " " 繋ぎで描く、色はw:settextcolorで指定した色
+      - フォントは assets/font.ttf を利用
+      - テキストはアンチエイジングでフォントのα値を使いながらギャザリングしないように綺麗に描く
+      - 下ぞろえ: ベースラインから高さ分引く ようにする
+    - w:getwidth() で横幅を、 w:getheight() で縦幅を取得
+  - imageモジュール luaimage.rs モジュールとして実装し、luaからは imageモジュールとして利用可能にする
+    - img = image.load(filepath) で画像をロードしてLuaImage imgインスタンスを作成
+    - cap = w:captureimage(x, y, width, height) でウィンドウwの x,y始点の width,heightのLuaImageを取得
+    - img:save(filepath) でLuaImage imgをfilepathへ保存
+    - img:subimage(x, y, width, height) でLuaImage imgの x,y始点の width,heightのサブ画像を取得
+  - native threadモジュール luanthread.rs モジュールとして実装し、luaからは nativethreadモジュールとして利用可能にする
+    - nth = nativethread.create(fn, ...) でLuaインタプリタを新たに作成
+      - 呼び出し元のluaインタプリタのglobalを共有
+      - fnに ... を与えてネイティブスレッドを初期化
+    - nth:start() でネイティブスレッド上で開始
+    - nth:kill() でネイティブスレッドを強制的に終了(lua側からはエラーが発生したように見せる)
+    - nth:status() でネイティブスレッドの実行状態(開始前、開始、終了済) を返す
+    - nmutexobj = nativethread.mutex() でミューテックスオブジェクトを作成
+      - nmutexobj:lock() で排他制御を得る、得られなければ得られるまで待機する（排他）
+      - nmutexobj:unlock() で排他制御を放つ（排他）
+      - nmutexobj:trylock() で排他制御をその場で得て trueを返すか、失敗して falseを返す（排他）
+  - midirモジュール luamidi.rs モジュールとして実装し、luaからは midiモジュールとして利用可能にする
+    - midi.midiin() でMidiInput::new(..).ports() を列挙
+    - midi.midiout() でMidiOutput::new(..).ports() を列挙
+    - midiin = midi.openinput(string) で MidiInput::new(..).ports() == string のLuaMidiInputPort midiinインスタンス(connect済)を得る
+    - midiout = midi.openoutput(string) で MidiOutput::new(..).ports() == string のLuaMidiOutputPort midioutインスタンス(connect済)を得る
+    - midiout:notein(note, velocity) で midioutインスタンスの sendメソッドを使い (&[NOTE_ON_MSG(0x90), note, velocity(デフォルトで0x64)]) を送る
+    - midiout:noteout(note, velocity) で midioutインスタンスの sendメソッドを使い (&[NOTE_ON_MSG(0x90), note, velocity(デフォルトで0x64)]) を送る
+    - midiout:send(...) で midioutインスタンスの sendメソッドへMIDIメッセージをそのまま送る
+* main.rsにメイン処理をまとめる
+* 引数
+  - ファイル名が指定された場合はそれをロードして実行
+  - 未指定の場合はインタプリタモードで起動
+    - ctrl+c で終了
+  - luaファイルの読み込み後実行する。coroutine.yield() が返却されると処理がrustへ戻り、eguiのウィンドウイベント処理・画像再描画を行う。
+  - luaの実行でエラーが起きたらスタックトレースを表示すること
+* 開発とビルドとテスト
+  - README.md ファイルを更新する
+    - 進捗や変更点は README.meファイルを更新する
+  - scripts フォルダにテスト用のluaファイルを作成してビルドが通るまでテスト用のluaファイルを実行して確認する
