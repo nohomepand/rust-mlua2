@@ -1,6 +1,6 @@
 mod luamod;
 mod luaimage;
-
+mod luamidi;
 use clap::Parser;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
@@ -24,6 +24,8 @@ fn main() {
     let lua_engine: &'static LuaEngine = Box::leak(lua_engine_box);
     luamod::register_sleep(&lua_engine.lua).expect("sleep関数登録失敗");
     luaimage::register_lua_image(&lua_engine.lua).expect("image API登録失敗");
+    luamidi::register(&lua_engine.lua).expect("midi API登録失敗");
+    
     if args.lua_file.is_none() {
         lua_engine.repl().expect("REPL失敗");
         return;

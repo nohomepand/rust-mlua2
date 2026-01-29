@@ -1,7 +1,7 @@
 // Luaグローバル関数 sleep(millisec) を登録
 pub fn register_sleep(lua: &Lua) -> LuaResult<()> {
-    let sleep_fn = lua.create_function(|_, ms: u64| {
-        std::thread::sleep(std::time::Duration::from_millis(ms));
+    let sleep_fn = lua.create_function(|_, secs: f64| {
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
         Ok(())
     })?;
     lua.globals().set("sleep", sleep_fn)?;

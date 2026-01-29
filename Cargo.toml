@@ -19,5 +19,5 @@ pollster = "0.3"
 winit = "0.28"
 fontdue = "0.7"
 unicode-width = "0.2.2"
-
 image = "0.24"
+midir = "0.10"
