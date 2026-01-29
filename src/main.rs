@@ -124,7 +124,7 @@ fn main() {
                 let mut textures = textures.lock().unwrap();
                 for w in windows_lock.iter() {
                     let w = w.lock().unwrap();
-                    let image = ColorImage::from_rgb([w.width, w.height], &w.buffer);
+                    let image = ColorImage::from_rgba_unmultiplied([w.width, w.height], &w.buffer);
                     let tex = textures.entry(w.id.clone()).or_insert_with(|| {
                         ctx.load_texture(&w.id, image.clone(), TextureOptions::NEAREST)
                     });

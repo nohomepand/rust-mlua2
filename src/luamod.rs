@@ -18,22 +18,51 @@ pub struct LuaWindow {
     pub id: String,
     pub width: usize,
     pub height: usize,
-    pub buffer: Vec<u8>, // RGB * (width*height)
-    pub text_color: (u8, u8, u8),
+    pub buffer: Vec<u8>, // RGBA * (width*height)
+    pub text_color: (u8, u8, u8, u8),
     pub text_font_size: usize,
 }
 
 impl LuaWindow {
-    pub fn point(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8) {
+    #[inline(always)]
+    // 境界チェックなし、高速化、アルファブレンドあり
+    pub fn unsafe_point(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8, a: u8) {
+        // TODO: point以外でも使えそう（ただしtextは text_color+フォントのアルファの影響を受けるので別実装）
+        let idx = (y as usize * self.width + x as usize) * 4;
+
+        let dst_r = self.buffer[idx] as u16;
+        let dst_g = self.buffer[idx + 1] as u16;
+        let dst_b = self.buffer[idx + 2] as u16;
+        let dst_a = self.buffer[idx + 3] as u16;
+
+        let src_r = r as u16;
+        let src_g = g as u16;
+        let src_b = b as u16;
+        let src_a = a as u16;
+
+        // アルファブレンド (整数演算)
+        // out_a = src_a + dst_a * (255 - src_a) / 255
+        let out_a = src_a + ((dst_a * (255 - src_a)) / 255);
+        if out_a > 0 {
+            self.buffer[idx] = ((src_r * src_a + dst_r * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+            self.buffer[idx + 1] = ((src_g * src_a + dst_g * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+            self.buffer[idx + 2] = ((src_b * src_a + dst_b * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+            self.buffer[idx + 3] = out_a.min(255) as u8;
+        } else {
+            self.buffer[idx] = 0;
+            self.buffer[idx + 1] = 0;
+            self.buffer[idx + 2] = 0;
+            self.buffer[idx + 3] = 0;
+        }
+    }
+    
+    pub fn point(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8, a: u8) {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return;
         }
-        let idx = (y as usize * self.width + x as usize) * 3;
-        self.buffer[idx] = r;
-        self.buffer[idx + 1] = g;
-        self.buffer[idx + 2] = b;
+        self.unsafe_point(x, y, r, g, b, a);
     }
-    pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, r: u8, g: u8, b: u8) {
+    pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, r: u8, g: u8, b: u8, a: u8) {
         let mut x0 = x0;
         let mut y0 = y0;
         let dx = (x1 - x0).abs();
@@ -41,14 +70,8 @@ impl LuaWindow {
         let dy = -(y1 - y0).abs();
         let sy = if y0 < y1 { 1 } else { -1 };
         let mut err = dx + dy;
-        let (w, h) = (self.width as i32, self.height as i32);
         loop {
-            if x0 >= 0 && y0 >= 0 && x0 < w && y0 < h {
-                let idx = (y0 as usize * self.width + x0 as usize) * 3;
-                self.buffer[idx] = r;
-                self.buffer[idx + 1] = g;
-                self.buffer[idx + 2] = b;
-            }
+            self.point(x0, y0, r, g, b, a);
             if x0 == x1 && y0 == y1 {
                 break;
             }
@@ -63,8 +86,7 @@ impl LuaWindow {
             }
         }
     }
-    pub fn circle(&mut self, cx: i32, cy: i32, radius: i32, r: u8, g: u8, b: u8) {
-        let (w, h) = (self.width as i32, self.height as i32);
+    pub fn circle(&mut self, cx: i32, cy: i32, radius: i32, r: u8, g: u8, b: u8, a: u8) {
         let mut x = 0;
         let mut y = radius;
         let mut d = 3 - 2 * radius;
@@ -81,12 +103,7 @@ impl LuaWindow {
                 (cx - y, cy - x),
             ];
             for &(px, py) in &points {
-                if px >= 0 && py >= 0 && px < w && py < h {
-                    let idx = (py as usize * self.width + px as usize) * 3;
-                    self.buffer[idx] = r;
-                    self.buffer[idx + 1] = g;
-                    self.buffer[idx + 2] = b;
-                }
+                self.point(px, py, r, g, b, a);
             }
             x += 1;
             if d > 0 {
@@ -97,10 +114,10 @@ impl LuaWindow {
             }
         }
     }
-    pub fn set_text_color(&mut self, r: u8, g: u8, b: u8) {
-        self.text_color = (r, g, b);
+    pub fn set_text_color(&mut self, r: u8, g: u8, b: u8, a: u8) {
+        self.text_color = (r, g, b, a);
     }
-    pub fn get_text_color(&self) -> (u8, u8, u8) {
+    pub fn get_text_color(&self) -> (u8, u8, u8, u8) {
         self.text_color
     }
     pub fn set_text_font_size(&mut self, size: usize) {
@@ -118,7 +135,7 @@ impl LuaWindow {
             fontdue::Font::from_bytes(data, fontdue::FontSettings::default())
                 .expect("font load failed")
         });
-        let (r, g, b) = self.text_color;
+        let (r, g, b, a) = self.text_color;
         let font_size = self.text_font_size as f32;
         let mut pen_x = x;
         let base_y = y + self.text_font_size as i32;
@@ -133,11 +150,24 @@ impl LuaWindow {
                         let px = pen_x + dx as i32 + metrics.xmin;
                         let py = draw_y + dy as i32;
                         if px >= 0 && px < self.width as i32 && py >= 0 && py < self.height as i32 {
-                            let idx = (py as usize * self.width + px as usize) * 3;
-                            let alpha = cov as f32 / 255.0;
-                            self.buffer[idx] = ((self.buffer[idx] as f32 * (1.0 - alpha)) + (r as f32 * alpha)) as u8;
-                            self.buffer[idx + 1] = ((self.buffer[idx + 1] as f32 * (1.0 - alpha)) + (g as f32 * alpha)) as u8;
-                            self.buffer[idx + 2] = ((self.buffer[idx + 2] as f32 * (1.0 - alpha)) + (b as f32 * alpha)) as u8;
+                            let idx = (py as usize * self.width + px as usize) * 4;
+                            let src_a = (cov as u16 * a as u16) / 255;
+                            let dst_r = self.buffer[idx] as u16;
+                            let dst_g = self.buffer[idx + 1] as u16;
+                            let dst_b = self.buffer[idx + 2] as u16;
+                            let dst_a = self.buffer[idx + 3] as u16;
+                            let out_a = src_a + ((dst_a * (255 - src_a)) / 255);
+                            if out_a > 0 {
+                                self.buffer[idx] = ((r as u16 * src_a + dst_r * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                self.buffer[idx + 1] = ((g as u16 * src_a + dst_g * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                self.buffer[idx + 2] = ((b as u16 * src_a + dst_b * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                self.buffer[idx + 3] = out_a.min(255) as u8;
+                            } else {
+                                self.buffer[idx] = 0;
+                                self.buffer[idx + 1] = 0;
+                                self.buffer[idx + 2] = 0;
+                                self.buffer[idx + 3] = 0;
+                            }
                         }
                     }
                 }
@@ -150,21 +180,22 @@ impl LuaWindow {
             pen_x += ch_width;
         }
     }
-    pub fn scroll(&mut self, dx: i32, dy: i32, r: u8, g: u8, b: u8) {
+    pub fn scroll(&mut self, dx: i32, dy: i32, r: u8, g: u8, b: u8, a: u8) {
         let (w, h) = (self.width as i32, self.height as i32);
         let mut new_buf = vec![0u8; self.buffer.len()];
         for y in 0..h {
             for x in 0..w {
                 let nx = x - dx;
                 let ny = y - dy;
-                let idx = (y as usize * self.width + x as usize) * 3;
+                let idx = (y as usize * self.width + x as usize) * 4;
                 if nx >= 0 && nx < w && ny >= 0 && ny < h {
-                    let src = (ny as usize * self.width + nx as usize) * 3;
-                    new_buf[idx..idx + 3].copy_from_slice(&self.buffer[src..src + 3]);
+                    let src = (ny as usize * self.width + nx as usize) * 4;
+                    new_buf[idx..idx + 4].copy_from_slice(&self.buffer[src..src + 4]);
                 } else {
                     new_buf[idx] = r;
                     new_buf[idx + 1] = g;
                     new_buf[idx + 2] = b;
+                    new_buf[idx + 3] = a;
                 }
             }
         }
@@ -194,13 +225,31 @@ impl UserData for LuaWindow {
                         let px = x + ix as i32;
                         let py = y + iy as i32;
                         if px >= 0 && py >= 0 && px < w && py < h {
-                            let idx = (py as usize * this.width + px as usize) * 3;
+                            // this.point(px, py, rgba[0], rgba[1], rgba[2], rgba[3]);
+                            let idx = (py as usize * this.width + px as usize) * 4;
                             let rgba = subimg.get_pixel(ix, iy).0;
-                            let alpha = rgba[3] as f32 / 255.0;
-                            // αブレンド
-                            this.buffer[idx] = ((this.buffer[idx] as f32 * (1.0 - alpha)) + (rgba[0] as f32 * alpha)) as u8;
-                            this.buffer[idx + 1] = ((this.buffer[idx + 1] as f32 * (1.0 - alpha)) + (rgba[1] as f32 * alpha)) as u8;
-                            this.buffer[idx + 2] = ((this.buffer[idx + 2] as f32 * (1.0 - alpha)) + (rgba[2] as f32 * alpha)) as u8;
+                            let src_r = rgba[0] as u16;
+                            let src_g = rgba[1] as u16;
+                            let src_b = rgba[2] as u16;
+                            let src_a = rgba[3] as u16;
+                            let dst_r = this.buffer[idx] as u16;
+                            let dst_g = this.buffer[idx + 1] as u16;
+                            let dst_b = this.buffer[idx + 2] as u16;
+                            let dst_a = this.buffer[idx + 3] as u16;
+
+                            // out_a = src_a + dst_a * (255 - src_a) / 255
+                            let out_a = src_a + ((dst_a * (255 - src_a)) / 255);
+                            if out_a > 0 {
+                                this.buffer[idx] = ((src_r * src_a + dst_r * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                this.buffer[idx + 1] = ((src_g * src_a + dst_g * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                this.buffer[idx + 2] = ((src_b * src_a + dst_b * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                this.buffer[idx + 3] = out_a.min(255) as u8;
+                            } else {
+                                this.buffer[idx] = 0;
+                                this.buffer[idx + 1] = 0;
+                                this.buffer[idx + 2] = 0;
+                                this.buffer[idx + 3] = 0;
+                            }
                         }
                     }
                 }
@@ -218,7 +267,7 @@ impl UserData for LuaWindow {
                         let sx = x + ix as i32;
                         let sy = y + iy as i32;
                         let idx_src = if sx >= 0 && sy >= 0 && sx < this.width as i32 && sy < this.height as i32 {
-                            (sy as usize * this.width + sx as usize) * 3
+                            (sy as usize * this.width + sx as usize) * 4
                         } else {
                             continue;
                         };
@@ -226,7 +275,7 @@ impl UserData for LuaWindow {
                         buf[idx_dst] = this.buffer[idx_src];
                         buf[idx_dst + 1] = this.buffer[idx_src + 1];
                         buf[idx_dst + 2] = this.buffer[idx_src + 2];
-                        buf[idx_dst + 3] = 255;
+                        buf[idx_dst + 3] = this.buffer[idx_src + 3];
                     }
                 }
                 let img = image::RgbaImage::from_vec(width, height, buf).unwrap();
@@ -240,74 +289,98 @@ impl UserData for LuaWindow {
         // #region graphic methods
         methods.add_method_mut(
             "cls",
-            |_, this, (r, g, b): (Option<u8>, Option<u8>, Option<u8>)| {
+            |_, this, (r, g, b, a): (Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
                 let r = r.unwrap_or(0);
                 let g = g.unwrap_or(0);
                 let b = b.unwrap_or(0);
-                for px in this.buffer.chunks_mut(3) {
+                let a = a.unwrap_or(255);
+                for px in this.buffer.chunks_mut(4) {
                     px[0] = r;
                     px[1] = g;
                     px[2] = b;
+                    px[3] = a;
                 }
                 Ok(())
             },
         );
         methods.add_method_mut(
             "point",
-            |_, this, (x, y, r, g, b): (i32, i32, u8, u8, u8)| {
-                this.point(x, y, r, g, b);
+            |_, this, (x, y, r, g, b, a): (i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                let r = r.unwrap_or(255);
+                let g = g.unwrap_or(255);
+                let b = b.unwrap_or(255);
+                let a = a.unwrap_or(255);
+                this.point(x, y, r, g, b, a);
                 Ok(())
             },
         );
         methods.add_method_mut(
             "line",
-            |_, this, (x0, y0, x1, y1, r, g, b): (i32, i32, i32, i32, u8, u8, u8)| {
-                this.line(x0, y0, x1, y1, r, g, b);
+            |_, this, (x0, y0, x1, y1, r, g, b, a): (i32, i32, i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                let r = r.unwrap_or(255);
+                let g = g.unwrap_or(255);
+                let b = b.unwrap_or(255);
+                let a = a.unwrap_or(255);
+                this.line(x0, y0, x1, y1, r, g, b, a);
                 Ok(())
             },
         );
         methods.add_method_mut(
             "circle",
-            |_, this, (cx, cy, radius, r, g, b): (i32, i32, i32, u8, u8, u8)| {
-                this.circle(cx, cy, radius, r, g, b);
+            |_, this, (cx, cy, radius, r, g, b, a): (i32, i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                let r = r.unwrap_or(255);
+                let g = g.unwrap_or(255);
+                let b = b.unwrap_or(255);
+                let a = a.unwrap_or(255);
+                this.circle(cx, cy, radius, r, g, b, a);
+                // alphaは255固定（必要ならcircleもa引数追加）
                 Ok(())
             },
         );
         methods.add_method_mut(
             "rect",
-            |_, this, (x1, y1, x2, y2, r, g, b): (i32, i32, i32, i32, u8, u8, u8)| {
-                this.line(x1, y1, x2, y1, r, g, b);
-                this.line(x2, y1, x2, y2, r, g, b);
-                this.line(x2, y2, x1, y2, r, g, b);
-                this.line(x1, y2, x1, y1, r, g, b);
+            |_, this, (x1, y1, x2, y2, r, g, b, a): (i32, i32, i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                let r = r.unwrap_or(255);
+                let g = g.unwrap_or(255);
+                let b = b.unwrap_or(255);
+                let a = a.unwrap_or(255);
+                this.line(x1, y1, x2, y1, r, g, b, a);
+                this.line(x2, y1, x2, y2, r, g, b, a);
+                this.line(x2, y2, x1, y2, r, g, b, a);
+                this.line(x1, y2, x1, y1, r, g, b, a);
                 Ok(())
             },
         );
         methods.add_method_mut(
             "fillrect",
-            |_, this, (x1, y1, x2, y2, r, g, b): (i32, i32, i32, i32, u8, u8, u8)| {
+            |_, this, (x1, y1, x2, y2, r, g, b, a): (i32, i32, i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                let r = r.unwrap_or(255);
+                let g = g.unwrap_or(255);
+                let b = b.unwrap_or(255);
+                let a = a.unwrap_or(255);
                 for y in y1.min(y2)..=y1.max(y2) {
-                    this.line(x1, y, x2, y, r, g, b);
+                    this.line(x1, y, x2, y, r, g, b, a);
                 }
                 Ok(())
             },
         );
         methods.add_method_mut(
             "scroll",
-            |_, this, (dx, dy, r, g, b): (i32, i32, Option<u8>, Option<u8>, Option<u8>)| {
-                this.scroll(dx, dy, r.unwrap_or(0), g.unwrap_or(0), b.unwrap_or(0));
+            |_, this, (dx, dy, r, g, b, a): (i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                this.scroll(dx, dy, r.unwrap_or(0), g.unwrap_or(0), b.unwrap_or(0), a.unwrap_or(255)); // alphaは255固定
                 Ok(())
             },
         );
         // #endregion graphic methods
         // #region text methods
-        methods.add_method_mut("settextcolor", |_, this, (r, g, b): (u8, u8, u8)| {
-            this.set_text_color(r, g, b);
+        methods.add_method_mut("settextcolor", |_, this, (r, g, b, a): (Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+            this.set_text_color(r.unwrap_or(255), g.unwrap_or(255), b.unwrap_or(255), a.unwrap_or(255));
+            // alphaはset_text_colorで255固定
             Ok(())
         });
         methods.add_method("gettextcolor", |_, this, ()| {
-            let (r, g, b) = this.get_text_color();
-            Ok((r, g, b))
+            let (r, g, b, a) = this.get_text_color();
+            Ok((r, g, b, a))
         });
         methods.add_method_mut(
             "settextfontsize",
@@ -360,11 +433,6 @@ impl LuaEngine {
         let lua = Lua::new();
         Ok(Self { lua })
     }
-    pub fn run_file(&self, path: &str) -> LuaResult<()> {
-        let code = fs::read_to_string(path).map_err(|e| mlua::Error::external(e))?;
-        self.lua.load(&code).exec()?;
-        Ok(())
-    }
     pub fn repl(&self) -> LuaResult<()> {
         use std::io::{self, Write};
         let stdin = io::stdin();
@@ -409,8 +477,8 @@ pub fn register_egui(lua: &Lua, windows: Arc<Mutex<Vec<Arc<Mutex<LuaWindow>>>>>)
                     id: name.clone(),
                     width: w,
                     height: h,
-                    buffer: vec![0; w * h * 3],
-                    text_color: (255, 255, 255),
+                    buffer: vec![0; w * h * 4],
+                    text_color: (255, 255, 255, 255),
                     text_font_size: 16, // デフォルトサイズ
                 }));
                 windows.lock().unwrap().push(win.clone());

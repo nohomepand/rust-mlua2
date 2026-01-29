@@ -1,6 +1,7 @@
 -- eg2.lua: imageロード・描画・保存・キャプチャのテスト
 local w = egui.create_window("imgtest", 320, 240)
 local rnd = function (n, l) return math.random() * (n or 100) + (l or 0) end
+w:cls(0, 0, 0, 0)
 for i = 1, 1000 do
     w:line(rnd(320), rnd(240), rnd(320), rnd(240), rnd(150, 100), rnd(150, 100), rnd(150, 100))
     print(i)
