@@ -1,0 +1,11 @@
+local buf = graphic.create(300, 300)
+buf:text(0, 0, "Hello")
+buf:rect(0, 0, buf:getwidth(), buf:getheight(), 255)
+print(buf)
+local img = buf:toimage()
+print(img)
+local imgbuf = img:tographic()
+print(imgbuf)
+imgbuf:line(0, 0, 100, 100, 255)
+
+img:save("y:/aaa.png")

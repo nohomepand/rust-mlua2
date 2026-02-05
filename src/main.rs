@@ -1,6 +1,7 @@
 mod luamod;
 mod luaimage;
 mod luamidi;
+mod luagraphic;
 use clap::Parser;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
@@ -23,8 +24,12 @@ fn main() {
     let lua_engine_box = Box::new(LuaEngine::new().expect("Lua初期化失敗"));
     let lua_engine: &'static LuaEngine = Box::leak(lua_engine_box);
     luamod::register_sleep(&lua_engine.lua).expect("sleep関数登録失敗");
+    luamod::register_hpc(&lua_engine.lua).expect("hpc API登録失敗");
+    luamod::register_utcdatetime(&lua_engine.lua).expect("utc datetime API登録失敗");
+    luamod::register_localdatetime(&lua_engine.lua).expect("local datetime API登録失敗");
     luaimage::register_lua_image(&lua_engine.lua).expect("image API登録失敗");
     luamidi::register(&lua_engine.lua).expect("midi API登録失敗");
+    luagraphic::register_lua_graphic(&lua_engine.lua).expect("graphic API登録失敗");
     
     if args.lua_file.is_none() {
         lua_engine.repl().expect("REPL失敗");

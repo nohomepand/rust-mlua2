@@ -1,3 +1,4 @@
+use crate::luagraphic;
 use mlua::{UserData, UserDataMethods, Lua, Result as LuaResult, Value};
 use image::{DynamicImage, GenericImageView, ImageBuffer, RgbaImage};
 use std::path::Path;
@@ -22,6 +23,21 @@ impl UserData for LuaImage {
         methods.add_method("subimage", |_, this, (sx, sy, width, height): (u32, u32, u32, u32)| {
             let sub = this.img.view(sx, sy, width, height).to_image();
             Ok(LuaImage { img: DynamicImage::ImageRgba8(sub) })
+        });
+        methods.add_method("getwidth", |_, this, ()| {
+            Ok(this.img.width())
+        });
+        methods.add_method("getheight", |_, this, ()| {
+            Ok(this.img.height())
+        });
+        methods.add_method("tographic", |lua, this, ()| {
+            let raw = this.img.to_rgba8().into_raw().into_boxed_slice();
+            let g = luagraphic::RGBABufferBase::new(
+                this.img.width() as usize,
+                this.img.height() as usize,
+                Some(&raw)
+            );
+            Ok(lua.create_userdata(g)?)
         });
     }
 }

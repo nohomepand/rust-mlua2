@@ -40,7 +40,7 @@ function Mandelbrot:compute()
     return result, maxiter
 end
 
-local m = Mandelbrot.new()
+local m = Mandelbrot.new(600, 600, 50)
 local w = egui.create_window("Mandelbrot", m.width, m.height)
 local c, mi = m:compute()
 for y = 1, m.height do

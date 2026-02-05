@@ -12,7 +12,7 @@ edition = "2021"
 egui = "0.22"
 egui-winit = "0.22"
 egui-wgpu = "0.22"
-mlua = { version = "0.9", features = ["lua54", "vendored"] }
+mlua = { version = "0.9", features = ["luajit52", "async", "vendored"] }
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 pollster = "0.3"
@@ -21,3 +21,4 @@ fontdue = "0.7"
 unicode-width = "0.2.2"
 image = "0.24"
 midir = "0.10"
+chrono = { version = "0.4", features = ["clock"] }

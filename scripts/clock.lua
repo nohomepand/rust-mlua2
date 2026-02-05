@@ -3,8 +3,6 @@ local function analog_clock()
     local radius = 150
     local w = egui.create_window("clock", (radius * 2 - cx / 2) * 2, (radius * 2 - cy / 2) * 2)
 
-    local start = os.clock()
-
     while true do
         w:cls()
         -- Draw clock face
@@ -24,9 +22,8 @@ local function analog_clock()
         end
 
         -- Get current time (smooth)
-        local t = os.date("*t")
-        local now = os.clock() - start
-        local sec = t.sec -- + (now % 1)
+        local t = datetime()
+        local sec = t.sec + (t.nanosec / 1000 / 1000 / 1000)
         local min = t.min + sec / 60
         local hour = (t.hour % 12) + min / 60
 
@@ -53,14 +50,16 @@ local function analog_clock()
 end
 
 local function digital_clock()
-    local w = egui.create_window("digital clock", 300, 200)
+    local w = egui.create_window("digital clock", 400, 400)
     local init_now = os.clock()
     while true do
         -- w:cls()
-        local t = os.date("*t")
-        local time_str = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
+        local t = datetime()
+        local time_str = string.format("%02d:%02d:%02d.%03d", t.hour, t.min, t.sec, math.floor(t.nanosec / 1000 / 1000))
         -- w:text(80, 140, time_str)
-        w:text(0, 0, time_str, os.clock() - init_now)
+        local tw, th = w:text(0, 0, time_str, os.clock() - init_now)
+        -- print(tw, th)
+        -- w:rect(0, 0, tw, th, 255, 0, 0, 255)
         coroutine.yield()
         w:scroll(0, w:gettextfontsize())
     end

@@ -1,3 +1,9 @@
+// luamod.rs
+// Lua VM・coroutine・API登録
+use mlua::{Lua, Result as LuaResult, StdLib, Thread, UserData, UserDataMethods, Variadic, LuaOptions};
+use std::fs;
+use std::sync::{Arc, Mutex};
+
 // Luaグローバル関数 sleep(millisec) を登録
 pub fn register_sleep(lua: &Lua) -> LuaResult<()> {
     let sleep_fn = lua.create_function(|_, secs: f64| {
@@ -7,12 +13,52 @@ pub fn register_sleep(lua: &Lua) -> LuaResult<()> {
     lua.globals().set("sleep", sleep_fn)?;
     Ok(())
 }
-// luamod.rs
-// Lua VM・coroutine・API登録
 
-use mlua::{Lua, Result as LuaResult, Thread, UserData, UserDataMethods, Variadic};
-use std::fs;
-use std::sync::{Arc, Mutex};
+static NOW: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(|| std::time::Instant::now());
+pub fn register_hpc(lua: &Lua) -> LuaResult<()> {
+    let hpc_fn = lua.create_function(|_, ()| {
+        let hpc = NOW.elapsed().as_secs_f64();
+        Ok(hpc)
+    })?;
+    lua.globals().set("hpc", hpc_fn)?; // high performance counter
+    Ok(())
+}
+
+pub fn register_utcdatetime(_lua: &Lua) -> LuaResult<()> {
+    let datetime_fn = _lua.create_function(|lua, ()| {
+        use chrono::prelude::*;
+        let now = chrono::Utc::now();
+        let table = lua.create_table()?;
+        table.set("year", now.year())?;
+        table.set("month", now.month())?;
+        table.set("date", now.day())?;
+        table.set("hour", now.hour())?;
+        table.set("min", now.minute())?;
+        table.set("sec", now.second())?;
+        table.set("nanosec", now.nanosecond())?;
+        Ok(table)
+    })?;
+    _lua.globals().set("utcdatetime", datetime_fn)?;
+    Ok(())
+}
+
+pub fn register_localdatetime(_lua: &Lua) -> LuaResult<()> {
+    let datetime_fn = _lua.create_function(|lua, ()| {
+        use chrono::prelude::*;
+        let now = chrono::Local::now();
+        let table = lua.create_table()?;
+        table.set("year", now.year())?;
+        table.set("month", now.month())?;
+        table.set("date", now.day())?;
+        table.set("hour", now.hour())?;
+        table.set("min", now.minute())?;
+        table.set("sec", now.second())?;
+        table.set("nanosec", now.nanosecond())?;
+        Ok(table)
+    })?;
+    _lua.globals().set("datetime", datetime_fn)?;
+    Ok(())
+}
 
 pub struct LuaWindow {
     pub id: String,
@@ -30,15 +76,15 @@ impl LuaWindow {
         // TODO: point以外でも使えそう（ただしtextは text_color+フォントのアルファの影響を受けるので別実装）
         let idx = (y as usize * self.width + x as usize) * 4;
 
-        let dst_r = self.buffer[idx] as u16;
-        let dst_g = self.buffer[idx + 1] as u16;
-        let dst_b = self.buffer[idx + 2] as u16;
-        let dst_a = self.buffer[idx + 3] as u16;
+        let dst_r = self.buffer[idx] as i32;
+        let dst_g = self.buffer[idx + 1] as i32;
+        let dst_b = self.buffer[idx + 2] as i32;
+        let dst_a = self.buffer[idx + 3] as i32;
 
-        let src_r = r as u16;
-        let src_g = g as u16;
-        let src_b = b as u16;
-        let src_a = a as u16;
+        let src_r = r as i32;
+        let src_g = g as i32;
+        let src_b = b as i32;
+        let src_a = a as i32;
 
         // アルファブレンド (整数演算)
         // out_a = src_a + dst_a * (255 - src_a) / 255
@@ -126,7 +172,7 @@ impl LuaWindow {
     pub fn get_text_font_size(&self) -> usize {
         self.text_font_size
     }
-    pub fn text(&mut self, x: i32, y: i32, text: &str) {
+    pub fn text(&mut self, x: i32, y: i32, text: &str) -> (usize, usize) {
         use std::sync::OnceLock;
         use unicode_width::UnicodeWidthChar;
         static FONT: OnceLock<fontdue::Font> = OnceLock::new();
@@ -139,6 +185,7 @@ impl LuaWindow {
         let font_size = self.text_font_size as f32;
         let mut pen_x = x;
         let base_y = y + self.text_font_size as i32;
+        let mut width = 0;
         for ch in text.chars() {
             let (metrics, bitmap) = font.rasterize(ch, font_size);
             // 下ぞろえ: ベースラインから高さ分引く
@@ -151,16 +198,16 @@ impl LuaWindow {
                         let py = draw_y + dy as i32;
                         if px >= 0 && px < self.width as i32 && py >= 0 && py < self.height as i32 {
                             let idx = (py as usize * self.width + px as usize) * 4;
-                            let src_a = (cov as u16 * a as u16) / 255;
-                            let dst_r = self.buffer[idx] as u16;
-                            let dst_g = self.buffer[idx + 1] as u16;
-                            let dst_b = self.buffer[idx + 2] as u16;
-                            let dst_a = self.buffer[idx + 3] as u16;
+                            let src_a = (cov as i32 * a as i32) / 255;
+                            let dst_r = self.buffer[idx] as i32;
+                            let dst_g = self.buffer[idx + 1] as i32;
+                            let dst_b = self.buffer[idx + 2] as i32;
+                            let dst_a = self.buffer[idx + 3] as i32;
                             let out_a = src_a + ((dst_a * (255 - src_a)) / 255);
                             if out_a > 0 {
-                                self.buffer[idx] = ((r as u16 * src_a + dst_r * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
-                                self.buffer[idx + 1] = ((g as u16 * src_a + dst_g * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
-                                self.buffer[idx + 2] = ((b as u16 * src_a + dst_b * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                self.buffer[idx] = ((r as i32 * src_a + dst_r * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                self.buffer[idx + 1] = ((g as i32 * src_a + dst_g * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                self.buffer[idx + 2] = ((b as i32 * src_a + dst_b * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
                                 self.buffer[idx + 3] = out_a.min(255) as u8;
                             } else {
                                 self.buffer[idx] = 0;
@@ -178,7 +225,9 @@ impl LuaWindow {
                 _ => self.text_font_size as i32,
             };
             pen_x += ch_width;
+            width += ch_width as usize;
         }
+        (width, self.text_font_size)
     }
     pub fn scroll(&mut self, dx: i32, dy: i32, r: u8, g: u8, b: u8, a: u8) {
         let (w, h) = (self.width as i32, self.height as i32);
@@ -228,14 +277,14 @@ impl UserData for LuaWindow {
                             // this.point(px, py, rgba[0], rgba[1], rgba[2], rgba[3]);
                             let idx = (py as usize * this.width + px as usize) * 4;
                             let rgba = subimg.get_pixel(ix, iy).0;
-                            let src_r = rgba[0] as u16;
-                            let src_g = rgba[1] as u16;
-                            let src_b = rgba[2] as u16;
-                            let src_a = rgba[3] as u16;
-                            let dst_r = this.buffer[idx] as u16;
-                            let dst_g = this.buffer[idx + 1] as u16;
-                            let dst_b = this.buffer[idx + 2] as u16;
-                            let dst_a = this.buffer[idx + 3] as u16;
+                            let src_r = rgba[0] as i32;
+                            let src_g = rgba[1] as i32;
+                            let src_b = rgba[2] as i32;
+                            let src_a = rgba[3] as i32;
+                            let dst_r = this.buffer[idx] as i32;
+                            let dst_g = this.buffer[idx + 1] as i32;
+                            let dst_b = this.buffer[idx + 2] as i32;
+                            let dst_a = this.buffer[idx + 3] as i32;
 
                             // out_a = src_a + dst_a * (255 - src_a) / 255
                             let out_a = src_a + ((dst_a * (255 - src_a)) / 255);
@@ -407,8 +456,7 @@ impl UserData for LuaWindow {
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                this.text(x, y, &s);
-                Ok(())
+                Ok(this.text(x, y, &s))
             },
         );
         // #endregion text methods
@@ -430,7 +478,7 @@ pub struct LuaEngine {
 
 impl LuaEngine {
     pub fn new() -> LuaResult<Self> {
-        let lua = Lua::new();
+        let lua = Lua::new_with(StdLib::ALL_SAFE | StdLib::JIT, LuaOptions::default())?;
         Ok(Self { lua })
     }
     pub fn repl(&self) -> LuaResult<()> {

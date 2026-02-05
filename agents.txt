@@ -8,6 +8,7 @@
     - w = egui.create_window("Title", width, height) でegui新規ウィンドウ（非VirtualWindow）ウィンドウタイトルを指定してwidth,height幅のウィンドウを作成
     - グラフィックは次のように扱う
       - **Painterオブジェクトは使わない**
+      - **wgpuのテクスチャとしてフレームを生成する**
       - フレームバッファとして width,height幅の RGBA配列を持つ
       - 1つのlua coroutine.yield()ごとにフレームバッファを **直接** ウィンドウへ転送して描画する(**最速の描画となるように留意する**)
       - 描画の際はリサイズを考慮しない
