@@ -17,12 +17,29 @@ use mlua::{Thread, ThreadStatus};
 struct Args {
     /// Luaファイル（省略時REPL）
     lua_file: Option<String>,
+    
+    /// 残りのコマンドライン引数
+    #[arg(trailing_var_arg = true)]
+    rest_args: Vec<String>,
 }
 
 fn main() {
     let args = Args::parse();
     let lua_engine_box = Box::new(LuaEngine::new().expect("Lua初期化失敗"));
     let lua_engine: &'static LuaEngine = Box::leak(lua_engine_box);
+    {
+        // Luaファイルパスとそれ以降のargsを設定
+        let mut lua_args = vec![];
+        if let Some(ref file) = args.lua_file {
+            lua_args.push(file.clone());
+        }
+        lua_args.extend(args.rest_args.clone());
+        let arg_table = lua_engine.lua.create_table().expect("argテーブル作成失敗");
+        lua_args.iter().enumerate().for_each(|(i, v)| {
+            arg_table.set(i, v.clone()).expect("arg設定失敗");
+        });
+        lua_engine.lua.globals().set("arg", arg_table).expect("arg設定失敗");
+    }
     luamod::register_sleep(&lua_engine.lua).expect("sleep関数登録失敗");
     luamod::register_hpc(&lua_engine.lua).expect("hpc API登録失敗");
     luamod::register_utcdatetime(&lua_engine.lua).expect("utc datetime API登録失敗");
@@ -77,6 +94,84 @@ fn main() {
     register_egui(&lua_engine.lua, windows.clone()).expect("egui Lua API登録失敗");
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
+        if let Event::WindowEvent { event: WindowEvent::KeyboardInput { input , .. }, .. } = &event {
+            lua_engine.lua.globals().get("egui").and_then(|egui_table: mlua::Table| {
+                let handler = egui_table.get::<_, mlua::Function>(
+                    "keyhandler"
+                );
+                match handler {
+                    Ok(f) => {
+                        f.call::<(mlua::Value, mlua::Value, mlua::Value), ()>(
+                            (
+                                mlua::Value::String(lua_engine.lua.create_string(&format!("{:?}", input.state)).unwrap()),
+                                match input.virtual_keycode {
+                                    Some(key) => mlua::Value::String(lua_engine.lua.create_string(&format!("{:?}", key)).unwrap()),
+                                    None => mlua::Value::Nil,
+                                },
+                                mlua::Value::Integer(input.scancode as i64)
+                            )
+                        ).ok();
+                    },
+                    Err(_) => { /* no handler registered */ }
+                };
+                Ok(())
+            }).ok();
+        }
+        if let Event::WindowEvent { event: WindowEvent::MouseInput { state, button, .. }, .. } = &event {
+            lua_engine.lua.globals().get("egui").and_then(|egui_table: mlua::Table| {
+                let handler = egui_table.get::<_, mlua::Function>
+                    ("mousehandler"
+                );
+                match handler {
+                    Ok(f) => {
+                        f.call::<(mlua::Value, mlua::Value), ()>(
+                            (
+                                mlua::Value::String(lua_engine.lua.create_string(&format!("{:?}", state)).unwrap()),
+                                mlua::Value::String(lua_engine.lua.create_string(&format!("{:?}", button)).unwrap()),
+                            )
+                        ).ok();
+                    },
+                    Err(_) => { /* no handler registered */ }
+                };
+                Ok(())
+            }).ok();
+        }
+        if let Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } = &event {
+            // // 各LuaWindowの範囲内か判定し、座標をローカル座標に変換して渡す
+            // let windows_lock = windows.lock().unwrap();
+            // for w in windows_lock.iter() {
+            //     let mut w = w.lock().unwrap();
+            //     // 親ウィンドウ内でのウィンドウの左上座標 (w.x, w.y) とサイズ (w.width, w.height) を仮定
+            //     let px = position.x as i32;
+            //     let py = position.y as i32;
+            //     // if px >= w.x && px < w.x + w.width as i32 && py >= w.y && py < w.y + w.height as i32 {
+            //     //     // ローカル座標
+            //     //     let local_x = px - w.x;
+            //     //     let local_y = py - w.y;
+            //     //     // ここでwにマウス座標を渡す処理を追加
+            //     //     // 例: w.mouse_pos = Some((local_x, local_y));
+            //     //     // 必要ならLua側にコールバックするなど
+            //     //     println!("Mouse moved in window {}: ({}, {})", w.id, local_x, local_y);
+            //     // }
+            // }
+            lua_engine.lua.globals().get("egui").and_then(|egui_table: mlua::Table| {
+                let handler = egui_table.get::<_, mlua::Function>(
+                    "cursorhandler"
+                );
+                match handler {
+                    Ok(f) => {
+                        f.call::<(mlua::Value, mlua::Value), ()>(
+                            (
+                                mlua::Value::Integer(position.x as i64),
+                                mlua::Value::Integer(position.y as i64),
+                            )
+                        ).ok();
+                    },
+                    Err(_) => { /* no handler registered */ }
+                };
+                Ok(())
+            }).ok();
+        }
         match &event {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 *control_flow = ControlFlow::Exit;

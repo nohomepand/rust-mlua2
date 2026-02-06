@@ -69,6 +69,9 @@ pub struct LuaWindow {
     pub text_font_size: usize,
 }
 
+// Remove static handlers; use a handler container with proper lifetime management.
+use std::cell::RefCell;
+
 impl LuaWindow {
     #[inline(always)]
     // 境界チェックなし、高速化、アルファブレンドあり

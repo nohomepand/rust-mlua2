@@ -18,9 +18,23 @@ function Entity:update()
     
 end
 
-local entities = {}
-local function on_click()
-    -- かけねぇ
+local keystates = {}
+local function on_keychange(...)
+    print("KEY", ...)
+end
+function egui.keyhandler(state, vk, code)
+    if keystates[vk] ~= state then
+        on_keychange(state, vk, code)
+    end
+    keystates[vk] = state
+end
+
+function egui.mousehandler(...)
+    print("MOUSE", ...)
+end
+
+function egui.cursorhandler(...)
+    print("CURSOR", ...)
 end
 
 while true do
