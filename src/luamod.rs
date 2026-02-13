@@ -62,15 +62,16 @@ pub fn register_localdatetime(_lua: &Lua) -> LuaResult<()> {
 
 pub struct LuaWindow {
     pub id: String,
+    pub x: i32, // 親ウィンドウ座標
+    pub y: i32, // 親ウィンドウ座標
     pub width: usize,
     pub height: usize,
     pub buffer: Vec<u8>, // RGBA * (width*height)
     pub text_color: (u8, u8, u8, u8),
     pub text_font_size: usize,
+    pub fillpaint_stack: Vec<(i32, i32)>,
+    pub fillpaint_visited: Vec<bool>,
 }
-
-// Remove static handlers; use a handler container with proper lifetime management.
-use std::cell::RefCell;
 
 impl LuaWindow {
     #[inline(always)]
@@ -366,6 +367,47 @@ impl UserData for LuaWindow {
                 Ok(())
             },
         );
+        methods.add_method(
+            "getpoint",
+            |_, this, (x, y): (i32, i32)| {
+                if x < 0 || y < 0 || x >= this.width as i32 || y >= this.height as i32 {
+                    return Ok((0u8, 0u8, 0u8, 0u8));
+                }
+                let idx = (y as usize * this.width + x as usize) * 4;
+                let r = this.buffer[idx];
+                let g = this.buffer[idx + 1];
+                let b = this.buffer[idx + 2];
+                let a = this.buffer[idx + 3];
+                Ok((r, g, b, a))
+            },
+        );
+        methods.add_method(
+            "getpointi",
+            |lua, this, (x, y, table,): (i32, i32, Option<mlua::Table>,)| {
+                let table = match table {
+                    Some(t) => t,
+                    None => lua.create_table()?,
+                };
+                
+                if x < 0 || y < 0 || x >= this.width as i32 || y >= this.height as i32 {
+                    table.set(1, 0)?;
+                    table.set(2, 0)?;
+                    table.set(3, 0)?;
+                    table.set(4, 0)?;
+                } else {
+                    let idx = (y as usize * this.width + x as usize) * 4;
+                    let r = this.buffer[idx];
+                    let g = this.buffer[idx + 1];
+                    let b = this.buffer[idx + 2];
+                    let a = this.buffer[idx + 3];
+                    table.set(1, r)?;
+                    table.set(2, g)?;
+                    table.set(3, b)?;
+                    table.set(4, a)?;
+                }
+                Ok(table)
+            },
+        );
         methods.add_method_mut(
             "line",
             |_, this, (x0, y0, x1, y1, r, g, b, a): (i32, i32, i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
@@ -423,6 +465,67 @@ impl UserData for LuaWindow {
                 Ok(())
             },
         );
+        methods.add_method_mut(
+            "paint",
+            |_, this, (x, y, r, g, b, a, sr, sg, sb, sa): (i32, i32, u8, u8, u8, Option<u8>, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                let a = a.unwrap_or(255);
+                let sr = sr.unwrap_or(r);
+                let sg = sg.unwrap_or(g);
+                let sb = sb.unwrap_or(b);
+                let sa = sa.unwrap_or(a);
+                let (w, h) = (this.width as i32, this.height as i32);
+                if x < 0 || y < 0 || x >= w || y >= h {
+                    return Ok(0);
+                }
+                this.fillpaint_stack.clear();
+                this.fillpaint_visited.fill(false);
+                // let mut stack: Vec<(i32, i32)> = Vec::with_capacity((w * h).min(4096) as usize);
+                // let mut visited = vec![false; (w * h) as usize];
+
+                let boundary = (sr, sg, sb, sa);
+                let fill = (r, g, b, a);
+                let mut count: usize = 0;
+
+                // 既に塗りつぶし色なら何もしない
+                let idx0 = (y as usize * this.width + x as usize) * 4;
+                let pixel0 = (
+                    this.buffer[idx0],
+                    this.buffer[idx0 + 1],
+                    this.buffer[idx0 + 2],
+                    this.buffer[idx0 + 3],
+                );
+                if pixel0 == boundary {
+                    return Ok(0);
+                }
+
+                this.fillpaint_stack.push((x, y));
+                while let Some((cx, cy)) = this.fillpaint_stack.pop() {
+                    if cx < 0 || cy < 0 || cx >= w || cy >= h {
+                        continue;
+                    }
+                    let idx = cy as usize * this.width + cx as usize;
+                    if this.fillpaint_visited[idx] {
+                        continue;
+                    }
+                    let idx_buf = idx * 4;
+                    let pr = this.buffer[idx_buf];
+                    let pg = this.buffer[idx_buf + 1];
+                    let pb = this.buffer[idx_buf + 2];
+                    let pa = this.buffer[idx_buf + 3];
+                    if (pr, pg, pb, pa) == boundary || (pr, pg, pb, pa) == fill {
+                        continue;
+                    }
+                    this.unsafe_point(cx, cy, r, g, b, a);
+                    this.fillpaint_visited[idx] = true;
+                    this.fillpaint_stack.push((cx + 1, cy));
+                    this.fillpaint_stack.push((cx - 1, cy));
+                    this.fillpaint_stack.push((cx, cy + 1));
+                    this.fillpaint_stack.push((cx, cy - 1));
+                    count += 1;
+                }
+                Ok(count)
+            },
+        );
         // #endregion graphic methods
         // #region text methods
         methods.add_method_mut("settextcolor", |_, this, (r, g, b, a): (Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
@@ -465,6 +568,12 @@ impl UserData for LuaWindow {
         // #endregion text methods
         
         // #region metric methods
+        methods.add_method("getx", |_, this, ()| {
+            Ok(this.x)
+        });
+        methods.add_method("gety", |_, this, ()| {
+            Ok(this.y)
+        });
         methods.add_method("getwidth", |_, this, ()| {
             Ok(this.width)
         });
@@ -481,8 +590,11 @@ pub struct LuaEngine {
 
 impl LuaEngine {
     pub fn new() -> LuaResult<Self> {
-        let lua = Lua::new_with(StdLib::ALL_SAFE | StdLib::JIT, LuaOptions::default())?;
-        Ok(Self { lua })
+        // Ok(Lua::new_with(StdLib::ALL_SAFE | StdLib::JIT, LuaOptions::default())?);
+        unsafe {
+            let lua = Lua::unsafe_new_with(StdLib::ALL, LuaOptions::default());
+            Ok(Self { lua })
+        }
     }
     pub fn repl(&self) -> LuaResult<()> {
         use std::io::{self, Write};
@@ -526,11 +638,15 @@ pub fn register_egui(lua: &Lua, windows: Arc<Mutex<Vec<Arc<Mutex<LuaWindow>>>>>)
                 let h = height.unwrap_or(240);
                 let win = Arc::new(Mutex::new(LuaWindow {
                     id: name.clone(),
+                    x: 0,
+                    y: 0,
                     width: w,
                     height: h,
                     buffer: vec![0; w * h * 4],
                     text_color: (255, 255, 255, 255),
                     text_font_size: 16, // デフォルトサイズ
+                    fillpaint_stack: Vec::new(),
+                    fillpaint_visited: vec![false; (w * h) as usize],
                 }));
                 windows.lock().unwrap().push(win.clone());
                 Ok(win)

@@ -469,6 +469,33 @@ impl UserData for RGBABufferBase {
         methods.add_method("getpoint", |_, this, (x, y): (i32, i32)| {
             Ok(this.get_point(x, y))
         });
+        methods.add_method(
+            "getpointi",
+            |lua, this, (x, y, table,): (i32, i32, Option<mlua::Table>,)| {
+                let table = match table {
+                    Some(t) => t,
+                    None => lua.create_table()?,
+                };
+                
+                if x < 0 || y < 0 || x >= this.width as i32 || y >= this.height as i32 {
+                    table.set(1, 0)?;
+                    table.set(2, 0)?;
+                    table.set(3, 0)?;
+                    table.set(4, 0)?;
+                } else {
+                    let idx = (y as usize * this.width + x as usize) * 4;
+                    let r = this.buffer[idx];
+                    let g = this.buffer[idx + 1];
+                    let b = this.buffer[idx + 2];
+                    let a = this.buffer[idx + 3];
+                    table.set(1, r)?;
+                    table.set(2, g)?;
+                    table.set(3, b)?;
+                    table.set(4, a)?;
+                }
+                Ok(table)
+            },
+        );
         methods.add_method_mut("line", |_, this, (x0, y0, x1, y1, r, g, b, a): (i32, i32, i32, i32, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
             let r = r.unwrap_or(0);
             let g = g.unwrap_or(0);
@@ -508,6 +535,63 @@ impl UserData for RGBABufferBase {
             }
             Ok(())
         });
+        methods.add_method_mut(
+            "paint",
+            |_, this, (x, y, r, g, b, a, sr, sg, sb, sa): (i32, i32, u8, u8, u8, Option<u8>, Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
+                let a = a.unwrap_or(255);
+                let sr = sr.unwrap_or(r);
+                let sg = sg.unwrap_or(g);
+                let sb = sb.unwrap_or(b);
+                let sa = sa.unwrap_or(a);
+                let (w, h) = (this.width as i32, this.height as i32);
+                if x < 0 || y < 0 || x >= w || y >= h {
+                    return Ok(());
+                }
+                let mut stack = Vec::with_capacity((w * h).min(4096) as usize);
+                let mut visited = vec![false; (w * h) as usize];
+
+                let boundary = (sr, sg, sb, sa);
+                let fill = (r, g, b, a);
+
+                // 既に塗りつぶし色なら何もしない
+                let idx0 = (y as usize * this.width + x as usize) * 4;
+                let pixel0 = (
+                    this.buffer[idx0],
+                    this.buffer[idx0 + 1],
+                    this.buffer[idx0 + 2],
+                    this.buffer[idx0 + 3],
+                );
+                if pixel0 == fill || pixel0 == boundary {
+                    return Ok(());
+                }
+
+                stack.push((x, y));
+                while let Some((cx, cy)) = stack.pop() {
+                    if cx < 0 || cy < 0 || cx >= w || cy >= h {
+                        continue;
+                    }
+                    let idx = cy as usize * this.width + cx as usize;
+                    if visited[idx] {
+                        continue;
+                    }
+                    let idx_buf = idx * 4;
+                    let pr = this.buffer[idx_buf];
+                    let pg = this.buffer[idx_buf + 1];
+                    let pb = this.buffer[idx_buf + 2];
+                    let pa = this.buffer[idx_buf + 3];
+                    if (pr, pg, pb, pa) == boundary || (pr, pg, pb, pa) == fill {
+                        continue;
+                    }
+                    this.unsafe_point(cx, cy, r, g, b, a);
+                    visited[idx] = true;
+                    stack.push((cx + 1, cy));
+                    stack.push((cx - 1, cy));
+                    stack.push((cx, cy + 1));
+                    stack.push((cx, cy - 1));
+                }
+                Ok(())
+            },
+        );
         methods.add_method_mut("settextcolor", |_, this, (r, g, b, a): (Option<u8>, Option<u8>, Option<u8>, Option<u8>)| {
             let r = r.unwrap_or(255);
             let g = g.unwrap_or(255);

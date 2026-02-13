@@ -56,7 +56,7 @@ fn main() {
     use egui_wgpu::renderer::ScreenDescriptor;
     
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().with_title("rust-mlua2").build(&event_loop).unwrap();
+    let window = WindowBuilder::new().with_title("rust-mlua2").with_maximized(true).build(&event_loop).unwrap();
     let mut state = State::new(&event_loop);
     let instance = egui_wgpu::wgpu::Instance::new(egui_wgpu::wgpu::InstanceDescriptor {
         backends: egui_wgpu::wgpu::Backends::all(),
@@ -137,23 +137,6 @@ fn main() {
             }).ok();
         }
         if let Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } = &event {
-            // // 各LuaWindowの範囲内か判定し、座標をローカル座標に変換して渡す
-            // let windows_lock = windows.lock().unwrap();
-            // for w in windows_lock.iter() {
-            //     let mut w = w.lock().unwrap();
-            //     // 親ウィンドウ内でのウィンドウの左上座標 (w.x, w.y) とサイズ (w.width, w.height) を仮定
-            //     let px = position.x as i32;
-            //     let py = position.y as i32;
-            //     // if px >= w.x && px < w.x + w.width as i32 && py >= w.y && py < w.y + w.height as i32 {
-            //     //     // ローカル座標
-            //     //     let local_x = px - w.x;
-            //     //     let local_y = py - w.y;
-            //     //     // ここでwにマウス座標を渡す処理を追加
-            //     //     // 例: w.mouse_pos = Some((local_x, local_y));
-            //     //     // 必要ならLua側にコールバックするなど
-            //     //     println!("Mouse moved in window {}: ({}, {})", w.id, local_x, local_y);
-            //     // }
-            // }
             lua_engine.lua.globals().get("egui").and_then(|egui_table: mlua::Table| {
                 let handler = egui_table.get::<_, mlua::Function>(
                     "cursorhandler"
@@ -208,7 +191,7 @@ fn main() {
                                 //     eprintln!("[LuaTraceback]\n{}", msg);
                                 // }
                             }
-                        }
+                        };
                     }
                 }
             }
@@ -223,16 +206,21 @@ fn main() {
                 let windows_lock = windows.lock().unwrap();
                 let mut textures = textures.lock().unwrap();
                 for w in windows_lock.iter() {
-                    let w = w.lock().unwrap();
+                    let mut w = w.lock().unwrap();
                     let image = ColorImage::from_rgba_unmultiplied([w.width, w.height], &w.buffer);
                     let tex = textures.entry(w.id.clone()).or_insert_with(|| {
                         ctx.load_texture(&w.id, image.clone(), TextureOptions::NEAREST)
                     });
                     tex.set(image, TextureOptions::NEAREST);
-                    egui::Window::new(&w.id).show(ctx, |ui| {
+                    let inner_response = egui::Window::new(&w.id).show(ctx, |ui| {
                         let size = egui::Vec2::new(w.width as f32, w.height as f32);
                         ui.image(&*tex, size);
                     });
+                    if let Some(window_rect) = inner_response.map(|r| r.response.rect) {
+                        let pos = window_rect.min;
+                        w.x = pos.x as i32;
+                        w.y = pos.y as i32;
+                    }
                 }
             });
             let needs_repaint = full_output.repaint_after.is_zero();
