@@ -16,7 +16,7 @@ end
 
 if first_out_port ~= nil then
     -- ここから先はポート名が分かる場合のみ
-    local out = midi.openoutput('Microsoft GS Wavetable Synth')
+    local out = midi.openoutput(first_out_port)
     -- プログラムチェンジでギター音色（例: 25 = Acoustic Guitar (nylon)）に変更
     out:send(0xC0, 24) -- 0xC0: Program Change, 24 = MIDI program number 25 (0-based)
     -- ピアノソナタK.545冒頭のメロディ（簡易版）

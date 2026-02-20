@@ -1,4 +1,6 @@
 .*
+*.exe
+*.mid
 target/
 
 !.gitignore

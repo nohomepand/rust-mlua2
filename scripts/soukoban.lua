@@ -15,6 +15,8 @@ local EMPTY = 0
 local WALL = 1
 local BOX = 2
 
+local BOXES = 1
+
 -------------------------------------------------
 -- 安全確認
 -------------------------------------------------
@@ -22,25 +24,22 @@ local function inside(x, y)
     return x > 1 and x < W and y > 1 and y < H
 end
 
+local function is_empty(x, y)
+    return inside(x, y) and map[y][x] == EMPTY
+end
+
 -------------------------------------------------
--- ステージ生成
+-- 賢いステージ生成
 -------------------------------------------------
-local function pseudo_random_walk(n)
-    n = n or 4
-    return function ()
-        while true do
-            local dir = math.random(1, 4)
-            for i = 1, math.random(1, n) do
-                coroutine.yield(dir)
-            end
-        end
+local function shuffle(tbl)
+    for i = #tbl, 2, -1 do
+        local j = math.random(1, i)
+        tbl[i], tbl[j] = tbl[j], tbl[i]
     end
 end
 
 local function new_stage()
-    :: re_create ::
-    map = {}
-
+    ::re_create::
     -- 基本マップ
     for y = 1, H do
         map[y] = {}
@@ -53,64 +52,84 @@ local function new_stage()
         end
     end
 
-    -- 1/4 をランダム壁で埋める
-    local fillcount = math.floor((W - 2) * (H - 2) / 4)
+    -- ランダム壁（箱の経路を邪魔しすぎないよう控えめに）
+    local fillcount = math.floor((W - 2) * (H - 2) / 8)
     local placed = 0
-
     while placed < fillcount do
         local x = math.random(2, W - 1)
         local y = math.random(2, H - 1)
-
         if map[y][x] == EMPTY then
-            map[y][x] = BOX
+            map[y][x] = WALL
             placed = placed + 1
         end
     end
 
-    -- ゴールは壁でない場所
+    -- ゴール配置
     repeat
         goal.x = math.random(6, W - 5)
         goal.y = math.random(6, H - 5)
     until map[goal.y][goal.x] == EMPTY
 
-    player.x = goal.x
-    player.y = goal.y
+    -- 複数箱
+    local box_count = math.min(1 + math.floor(stage / 5), 4)
+    local boxes = {}
+    boxes[1] = {x = goal.x, y = goal.y}
 
-    -------------------------------------------------
-    -- 逆生成（既存壁を考慮）
-    -------------------------------------------------
-
-    local steps = 60 + stage * 10
-    local rndwalk = coroutine.wrap(pseudo_random_walk(2 + math.floor(stage / 10)))
-    for i = 1, steps do
-        local dir = rndwalk()
-        local dx, dy = 0, 0
-        if dir == 1 then dx = 1 end
-        if dir == 2 then dx = -1 end
-        if dir == 3 then dy = 1 end
-        if dir == 4 then dy = -1 end
-
-        local frontx = player.x + dx
-        local fronty = player.y + dy
-        local backx  = player.x - dx
-        local backy  = player.y - dy
-
-        if inside(frontx, fronty) and inside(backx, backy) then
-            if map[fronty][frontx] == EMPTY and
-                map[backy][backx] == EMPTY then
-                -- BOX設置（将来ここを押すことになる）
-                map[fronty][frontx] = BOX
-
-                -- プレイヤーを後退
-                player.x = backx
-                player.y = backy
+    -- ゴールから逆探索で箱を配置
+    for i = 2, box_count + 1 do
+        local found = false
+        for try = 1, 40 do
+            local bx, by = boxes[i-1].x, boxes[i-1].y
+            local dirs = {{1,0},{-1,0},{0,1},{0,-1}}
+            shuffle(dirs)
+            for _, d in ipairs(dirs) do
+                local px, py = bx + d[1], by + d[2]
+                local bx2, by2 = bx - d[1], by - d[2]
+                if is_empty(px, py) and is_empty(bx2, by2) then
+                    -- 既存の箱と重ならない
+                    local overlap = false
+                    for j = 1, #boxes do
+                        if (boxes[j].x == px and boxes[j].y == py) or (boxes[j].x == bx2 and boxes[j].y == by2) then
+                            overlap = true
+                            break
+                        end
+                    end
+                    if not overlap then
+                        boxes[i] = {x = px, y = py}
+                        found = true
+                        break
+                    end
+                end
             end
+            if found then break end
+        end
+        if not found then goto re_create end
+    end
+
+    -- 箱を配置
+    for i = 2, #boxes do
+        map[boxes[i].y][boxes[i].x] = BOX
+    end
+
+    -- プレイヤー配置（最後の箱の押し元）
+    local last = boxes[#boxes]
+    local dirs = {{1,0},{-1,0},{0,1},{0,-1}}
+    shuffle(dirs)
+    local placed_player = false
+    for _, d in ipairs(dirs) do
+        local px, py = last.x + d[1], last.y + d[2]
+        if is_empty(px, py) then
+            player.x = px
+            player.y = py
+            placed_player = true
+            break
         end
     end
+    if not placed_player then goto re_create end
+
+    -- ゴールは空きに
     map[goal.y][goal.x] = EMPTY
-    if player.x == goal.x and player.y == goal.y then
-        goto re_create
-    end
+    if player.x == goal.x and player.y == goal.y then goto re_create end
 end
 
 -------------------------------------------------

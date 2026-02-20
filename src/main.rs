@@ -80,7 +80,7 @@ fn main() {
         format: surface_format,
         width: size.width,
         height: size.height,
-        present_mode: egui_wgpu::wgpu::PresentMode::Fifo,
+        present_mode: egui_wgpu::wgpu::PresentMode::Immediate, // VSync OFF
         alpha_mode: egui_wgpu::wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
     };

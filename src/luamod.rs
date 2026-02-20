@@ -137,11 +137,10 @@ impl LuaWindow {
         }
     }
     pub fn circle(&mut self, cx: i32, cy: i32, radius: i32, r: u8, g: u8, b: u8, a: u8) {
-        let mut x = 0;
-        let mut y = radius;
-        let mut d = 3 - 2 * radius;
-        while y >= x {
-            // 8方向対称点
+        let mut x = radius;
+        let mut y = 0;
+        let mut q = radius;
+        while x >= y {
             let points = [
                 (cx + x, cy + y),
                 (cx - x, cy + y),
@@ -155,12 +154,11 @@ impl LuaWindow {
             for &(px, py) in &points {
                 self.point(px, py, r, g, b, a);
             }
-            x += 1;
-            if d > 0 {
-                y -= 1;
-                d = d + 4 * (x - y) + 10;
-            } else {
-                d = d + 4 * x + 6;
+            q = q - y - y - 1;
+            y = y + 1;
+            if q < 0 {
+                q = q + x + x - 1;
+                x = x - 1;
             }
         }
     }
@@ -427,7 +425,6 @@ impl UserData for LuaWindow {
                 let b = b.unwrap_or(255);
                 let a = a.unwrap_or(255);
                 this.circle(cx, cy, radius, r, g, b, a);
-                // alphaは255固定（必要ならcircleもa引数追加）
                 Ok(())
             },
         );

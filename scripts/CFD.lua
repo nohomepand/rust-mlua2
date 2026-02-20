@@ -1,6 +1,6 @@
 math.randomseed(os.time())
 
-local N = 128
+local N = arg[1] or 128
 local SCALE = 3
 local SIZE = N + 2
 
@@ -196,20 +196,31 @@ end
 -------------------------------------------------
 -- メインループ
 -------------------------------------------------
-print("Press arrow-keys to spread smoke. Press space key to clear.")
+print("Press arrow-keys to spread smoke.")
+print("Press space key to clear.")
+print("Press \"S\" key to vacuum.")
 init()
 while true do
     if next(keystate) ~= nil then
         local cx = math.floor(N / 2)
         local cy = math.floor(N / 2)
         
-        for x = -3, 3 do
-            for y = -3, 3 do
-                density[IX(cx + x, cy + y)] = 255
+        if keystate["S"] == nil then
+            local sz = 3
+            for x = -sz, sz do
+                for y = -sz, sz do
+                    density[IX(cx + x, cy + y)] = 250
+                end
+            end
+        else
+            local sz = 3
+            for x = -sz, sz do
+                for y = -sz, sz do
+                    density[IX(cx + x, cy + y)] = 0
+                end
             end
         end
-        -- density[IX(cx, cy)] = 255
-
+        
         if keystate["Left"] then Vx[IX(cx, cy)] = -50 end
         if keystate["Right"] then Vx[IX(cx, cy)] = 50 end
         if keystate["Up"] then Vy[IX(cx, cy)] = -50 end

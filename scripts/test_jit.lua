@@ -1,4 +1,4 @@
-local prints = require"scripts.prints"
+local prints = require"scripts.mod.prints"
 local jit = jit or nil
 if not jit then
     print("No JIT")

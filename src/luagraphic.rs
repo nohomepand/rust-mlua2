@@ -315,11 +315,10 @@ impl RGBABufferBase {
     }
 
     pub fn circle(&mut self, cx: i32, cy: i32, radius: i32, r: u8, g: u8, b: u8, a: u8) {
-        let mut x = 0;
-        let mut y = radius;
-        let mut d = 3 - 2 * radius;
-        while y >= x {
-            // 8方向対称点
+        let mut x = radius;
+        let mut y = 0;
+        let mut q = radius;
+        while x >= y {
             let points = [
                 (cx + x, cy + y),
                 (cx - x, cy + y),
@@ -333,12 +332,11 @@ impl RGBABufferBase {
             for &(px, py) in &points {
                 self.point(px, py, r, g, b, a);
             }
-            x += 1;
-            if d > 0 {
-                y -= 1;
-                d = d + 4 * (x - y) + 10;
-            } else {
-                d = d + 4 * x + 6;
+            q = q - y - y - 1;
+            y = y + 1;
+            if q < 0 {
+                q = q + x + x - 1;
+                x = x - 1;
             }
         }
     }
@@ -436,6 +434,87 @@ impl RGBABufferBase {
 
 impl UserData for RGBABufferBase {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        // #region image methods
+        // drawimage: w:drawimage(img, x, y, img_sx, img_sy, img_dx, img_dy)
+        methods.add_method_mut(
+            "drawimage",
+            |_, this, (img, x, y, img_sx, img_sy, img_dx, img_dy): (mlua::AnyUserData, i32, i32, Option<u32>, Option<u32>, Option<u32>, Option<u32>)| {
+                use crate::luaimage::LuaImage;
+                let img = img.borrow::<LuaImage>()?;
+                let sx = img_sx.unwrap_or(0);
+                let sy = img_sy.unwrap_or(0);
+                let dx = img_dx.unwrap_or(img.img.width());
+                let dy = img_dy.unwrap_or(img.img.height());
+                // 切り取り
+                let subimg = img.img.crop_imm(sx, sy, dx, dy);
+                let (w, h) = (this.width as i32, this.height as i32);
+                let subimg = subimg.to_rgba8();
+                for iy in 0..subimg.height() {
+                    for ix in 0..subimg.width() {
+                        let px = x + ix as i32;
+                        let py = y + iy as i32;
+                        if px >= 0 && py >= 0 && px < w && py < h {
+                            // this.point(px, py, rgba[0], rgba[1], rgba[2], rgba[3]);
+                            let idx = (py as usize * this.width + px as usize) * 4;
+                            let rgba = subimg.get_pixel(ix, iy).0;
+                            let src_r = rgba[0] as i32;
+                            let src_g = rgba[1] as i32;
+                            let src_b = rgba[2] as i32;
+                            let src_a = rgba[3] as i32;
+                            let dst_r = this.buffer[idx] as i32;
+                            let dst_g = this.buffer[idx + 1] as i32;
+                            let dst_b = this.buffer[idx + 2] as i32;
+                            let dst_a = this.buffer[idx + 3] as i32;
+
+                            // out_a = src_a + dst_a * (255 - src_a) / 255
+                            let out_a = src_a + ((dst_a * (255 - src_a)) / 255);
+                            if out_a > 0 {
+                                this.buffer[idx] = ((src_r * src_a + dst_r * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                this.buffer[idx + 1] = ((src_g * src_a + dst_g * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                this.buffer[idx + 2] = ((src_b * src_a + dst_b * dst_a * (255 - src_a) / 255) / out_a).min(255) as u8;
+                                this.buffer[idx + 3] = out_a.min(255) as u8;
+                            } else {
+                                this.buffer[idx] = 0;
+                                this.buffer[idx + 1] = 0;
+                                this.buffer[idx + 2] = 0;
+                                this.buffer[idx + 3] = 0;
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+        );
+        // captureimage: w:captureimage(x, y, width, height)
+        methods.add_method(
+            "captureimage",
+            |lua, this, (x, y, width, height): (i32, i32, u32, u32)| {
+                use crate::luaimage::LuaImage;
+                let mut buf = vec![0u8; (width * height * 4) as usize];
+                for iy in 0..height {
+                    for ix in 0..width {
+                        let sx = x + ix as i32;
+                        let sy = y + iy as i32;
+                        let idx_src = if sx >= 0 && sy >= 0 && sx < this.width as i32 && sy < this.height as i32 {
+                            (sy as usize * this.width + sx as usize) * 4
+                        } else {
+                            continue;
+                        };
+                        let idx_dst = (iy as usize * width as usize + ix as usize) * 4;
+                        buf[idx_dst] = this.buffer[idx_src];
+                        buf[idx_dst + 1] = this.buffer[idx_src + 1];
+                        buf[idx_dst + 2] = this.buffer[idx_src + 2];
+                        buf[idx_dst + 3] = this.buffer[idx_src + 3];
+                    }
+                }
+                let img = image::RgbaImage::from_vec(width, height, buf).unwrap();
+                let dynimg = image::DynamicImage::ImageRgba8(img);
+                let luaimg = LuaImage { img: dynimg };
+                let ud = lua.create_userdata(luaimg)?;
+                Ok(ud)
+            }
+        );
+        // #endregion image methods
         methods.add_method("getwidth", |_, this, ()| {
             Ok(this.width)
         });
@@ -530,7 +609,7 @@ impl UserData for RGBABufferBase {
             let a = a.unwrap_or(255);
             for fy in y..(y + height) {
                 for fx in x..(x + width) {
-                    this.point(fx, fy, r, g, b, a);
+                    this.unsafe_point(fx, fy, r, g, b, a);
                 }
             }
             Ok(())

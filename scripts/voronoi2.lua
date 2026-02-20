@@ -1,3 +1,6 @@
+local fpswaiter = require"scripts.mod.fpswaiter"
+local waiter = fpswaiter.fpswaiter:new()
+
 -- ============================================
 --  Random Moving Points + Voronoi Diagram
 -- ============================================
@@ -177,4 +180,5 @@ while true do
     end
 
     coroutine.yield()
+    waiter:await(60)
 end

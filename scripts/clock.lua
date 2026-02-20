@@ -1,3 +1,6 @@
+local fpswaiter = require"scripts.mod.fpswaiter"
+local waiter = fpswaiter.fpswaiter:new()
+
 local function analog_clock()
     local cx, cy = 200, 200 -- center of clock
     local radius = 150
@@ -74,4 +77,5 @@ while true do
     end
     -- sleep(10)
     coroutine.yield()
+    waiter:await(60)
 end

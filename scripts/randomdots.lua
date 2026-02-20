@@ -16,7 +16,7 @@ local function dots()
     for i=0, 10000 do
         local x = rnd(w)
         local y = rnd(h)
-        local r, g, b = rnd(150, 100), rnd(150, 100), rnd(150, 100)
+        local r, g, b = rnd(255), rnd(255), rnd(255)
         win:point(x, y, r, g, b)
     end
 end
